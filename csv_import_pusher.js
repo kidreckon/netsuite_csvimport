@@ -5,9 +5,8 @@
  *
  * CSV Import Pusher
  * -----------------
- * Picks up CSV files from a File Cabinet folder, chooses the saved CSV import
- * (Setup > Import/Export > Import CSV Records > Saved CSV Imports) based on the
- * file name prefix, and submits it with N/task. Results still appear on the
+ * Picks up CSV files from File Cabinet folders, chooses the saved CSV import
+ * (Setup > Import/Export > Saved CSV Imports) based on the folder the file is in, and submits it with N/task. Results still appear on the
  * normal "CSV Import Status" page.
  *
  * Files are assigned to processing queues 1..5 in round-robin order so the
@@ -15,24 +14,24 @@
  * license; without it, set USE_QUEUES to false).
  *
  * Script parameters (create on the script record):
- *   custscript_csvpush_source_folder    (Free-Form Text / Integer)  internal ID of the inbox folder
  *   custscript_csvpush_done_folder      (Free-Form Text / Integer)  folder for submitted files
  *   custscript_csvpush_error_folder     (Free-Form Text / Integer)  optional; folder for files with no matching import / submit errors
  */
 define(['N/file', 'N/log', 'N/runtime', 'N/search', 'N/task', 'N/cache'], (file, log, runtime, search, task, cache) => {
 
     /**
-     * File name prefix -> saved CSV import (script ID like 'custimport_customer_load'
-     * or its numeric internal ID). Prefix is matched case-insensitively against the
-     * start of the file name, e.g. "customer_2026-10-05.csv" -> 'customer'.
-     * Longest prefix wins, so 'salesorder_line' beats 'salesorder'.
+     * Inbox folder internal ID -> saved CSV import (script ID like
+     * 'custimport_customer_load' or its numeric internal ID).
+     * Find a folder's ID in Documents > Files > File Cabinet (Internal ID column,
+     * enable it via Customize View if hidden). Find an import's script ID in
+     * Setup > Import/Export > Saved CSV Imports.
+     * Files placed directly in a mapped folder are sent to that folder's import.
      */
-    const IMPORT_MAP = {
-        customer: 'custimport_customer_load',
-        vendor: 'custimport_vendor_load',
-        salesorder: 'custimport_salesorder_load',
-        journalentry: 'custimport_journal_load',
-        inventoryadjustment: 'custimport_invadj_load',
+    const FOLDER_IMPORT_MAP = {
+        '1001': 'custimport_customer_load',
+        '1002': 'custimport_vendor_load',
+        '1003': 'custimport_salesorder_load',
+        '1004': 'custimport_journal_load',
     };
 
     const USE_QUEUES = true;
@@ -43,27 +42,24 @@ define(['N/file', 'N/log', 'N/runtime', 'N/search', 'N/task', 'N/cache'], (file,
 
     const execute = () => {
         const script = runtime.getCurrentScript();
-        const sourceFolder = script.getParameter({ name: 'custscript_csvpush_source_folder' });
         const doneFolder = script.getParameter({ name: 'custscript_csvpush_done_folder' });
         const errorFolder = script.getParameter({ name: 'custscript_csvpush_error_folder' });
 
-        if (!sourceFolder || !doneFolder) {
-            throw new Error('Source and done folder parameters are required.');
+        if (!doneFolder) {
+            throw new Error('Done folder parameter is required.');
         }
 
-        const prefixes = Object.keys(IMPORT_MAP).sort((a, b) => b.length - a.length);
         let queue = getStartQueue();
         const summary = { submitted: 0, unmapped: 0, failed: 0 };
 
-        for (const f of listCsvFiles(sourceFolder)) {
+        for (const f of listCsvFiles(Object.keys(FOLDER_IMPORT_MAP))) {
             if (script.getRemainingUsage() < MIN_UNITS_LEFT) {
                 log.audit('Low governance', 'Stopping; remaining files will be handled next run.');
                 break;
             }
 
-            const lowerName = f.name.toLowerCase();
-            const prefix = prefixes.find((p) => lowerName.startsWith(p));
-            if (!prefix) {
+            const importId = FOLDER_IMPORT_MAP[f.folder];
+            if (!importId) {
                 log.error('No import mapping', f.name);
                 summary.unmapped++;
                 moveFile(f.id, errorFolder);
@@ -74,14 +70,14 @@ define(['N/file', 'N/log', 'N/runtime', 'N/search', 'N/task', 'N/cache'], (file,
             try {
                 const csvTask = task.create({
                     taskType: task.TaskType.CSV_IMPORT,
-                    mappingId: IMPORT_MAP[prefix],
+                    mappingId: importId,
                     importFile: file.load({ id: f.id }),
-                    name: `${prefix} ${f.name}`.slice(0, 100),
+                    name: `${importId} ${f.name}`.slice(0, 100),
                 });
                 if (USE_QUEUES) csvTask.queue = queue;
 
                 const taskId = csvTask.submit();
-                log.audit('Submitted', `${f.name} -> ${IMPORT_MAP[prefix]}${USE_QUEUES ? ` (queue ${queue})` : ''}, task ${taskId}`);
+                log.audit('Submitted', `${f.name} -> ${importId}${USE_QUEUES ? ` (queue ${queue})` : ''}, task ${taskId}`);
                 moveFile(f.id, doneFolder);
                 summary.submitted++;
             } catch (e) {
@@ -95,14 +91,14 @@ define(['N/file', 'N/log', 'N/runtime', 'N/search', 'N/task', 'N/cache'], (file,
         log.audit('Done', JSON.stringify(summary));
     };
 
-    const listCsvFiles = (folderId) => {
+    const listCsvFiles = (folderIds) => {
         const results = [];
         search.create({
             type: 'file',
-            filters: [['folder', 'anyof', folderId], 'AND', ['filetype', 'anyof', 'CSV']],
-            columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })],
+            filters: [['folder', 'anyof', folderIds], 'AND', ['filetype', 'anyof', 'CSV']],
+            columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC }), 'folder'],
         }).run().each((r) => {
-            results.push({ id: r.id, name: r.getValue('name') });
+            results.push({ id: r.id, name: r.getValue('name'), folder: r.getValue('folder') });
             return true;
         });
         return results;
