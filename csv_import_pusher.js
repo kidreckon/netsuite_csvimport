@@ -6,33 +6,41 @@
  * CSV Import Pusher
  * -----------------
  * Picks up CSV files from File Cabinet folders, chooses the saved CSV import
- * (Setup > Import/Export > Saved CSV Imports) based on the folder the file is in, and submits it with N/task. Results still appear on the
+ * (Setup > Import/Export > Saved CSV Imports) based on the "Push" folder the
+ * file is in, and submits it with N/task. Submitted files move to that type's
+ * Archived folder, failures to its Error folder. Results still appear on the
  * normal "CSV Import Status" page.
  *
  * Files are assigned to processing queues 1..5 in round-robin order so the
  * work spreads across all queues (queues only apply with the SuiteCloud Plus
  * license; without it, set USE_QUEUES to false).
  *
- * Script parameters (create on the script record):
- *   custscript_csvpush_done_folder      (Free-Form Text / Integer)  folder for submitted files
- *   custscript_csvpush_error_folder     (Free-Form Text / Integer)  optional; folder for files with no matching import / submit errors
+ * No script parameters are needed; all folder/import settings live in PUSH_CONFIG below.
  */
 define(['N/file', 'N/log', 'N/runtime', 'N/search', 'N/task', 'N/cache'], (file, log, runtime, search, task, cache) => {
 
     /**
-     * Inbox folder internal ID -> saved CSV import (script ID like
-     * 'custimport_customer_load' or its numeric internal ID).
-     * Find a folder's ID in Documents > Files > File Cabinet (Internal ID column,
-     * enable it via Customize View if hidden). Find an import's script ID in
-     * Setup > Import/Export > Saved CSV Imports.
-     * Files placed directly in a mapped folder are sent to that folder's import.
+     * One entry per record type. Only CSVs placed directly in `pushFolder` are
+     * submitted. `importId` is the saved CSV import's internal ID or script ID
+     * (Setup > Import/Export > Saved CSV Imports). Folder IDs come from the
+     * File Cabinet's Internal ID column.
      */
-    const FOLDER_IMPORT_MAP = {
-        '1001': 'custimport_customer_load',
-        '1002': 'custimport_vendor_load',
-        '1003': 'custimport_salesorder_load',
-        '1004': 'custimport_journal_load',
-    };
+    const PUSH_CONFIG = [
+        {
+            type: 'Journal',
+            importId: 693,
+            pushFolder: 9159,       // BL_Mass CSV Upload > Journal > 01 Push
+            errorFolder: 9160,      // ... > 02 Error
+            archivedFolder: 9161,   // ... > 03 Archived
+        },
+        // {
+        //     type: 'Vendor Invoice',
+        //     importId: 0,          // saved import internal ID
+        //     pushFolder: 0,        // Vendor Invoice > 01 Push
+        //     errorFolder: 0,
+        //     archivedFolder: 0,
+        // },
+    ];
 
     const USE_QUEUES = true;
     const MAX_QUEUE = 5;           // CSV import queues are 1..5
@@ -42,48 +50,37 @@ define(['N/file', 'N/log', 'N/runtime', 'N/search', 'N/task', 'N/cache'], (file,
 
     const execute = () => {
         const script = runtime.getCurrentScript();
-        const doneFolder = script.getParameter({ name: 'custscript_csvpush_done_folder' });
-        const errorFolder = script.getParameter({ name: 'custscript_csvpush_error_folder' });
-
-        if (!doneFolder) {
-            throw new Error('Done folder parameter is required.');
-        }
+        const configByFolder = {};
+        PUSH_CONFIG.forEach((c) => { configByFolder[c.pushFolder] = c; });
 
         let queue = getStartQueue();
-        const summary = { submitted: 0, unmapped: 0, failed: 0 };
+        const summary = { submitted: 0, failed: 0 };
 
-        for (const f of listCsvFiles(Object.keys(FOLDER_IMPORT_MAP))) {
+        for (const f of listCsvFiles(Object.keys(configByFolder))) {
             if (script.getRemainingUsage() < MIN_UNITS_LEFT) {
                 log.audit('Low governance', 'Stopping; remaining files will be handled next run.');
                 break;
             }
 
-            const importId = FOLDER_IMPORT_MAP[f.folder];
-            if (!importId) {
-                log.error('No import mapping', f.name);
-                summary.unmapped++;
-                moveFile(f.id, errorFolder);
-                continue;
-            }
-
+            const cfg = configByFolder[f.folder];
             queue = queue % MAX_QUEUE + 1;
             try {
                 const csvTask = task.create({
                     taskType: task.TaskType.CSV_IMPORT,
-                    mappingId: importId,
+                    mappingId: cfg.importId,
                     importFile: file.load({ id: f.id }),
-                    name: `${importId} ${f.name}`.slice(0, 100),
+                    name: `${cfg.type} ${f.name}`.slice(0, 100),
                 });
                 if (USE_QUEUES) csvTask.queue = queue;
 
                 const taskId = csvTask.submit();
-                log.audit('Submitted', `${f.name} -> ${importId}${USE_QUEUES ? ` (queue ${queue})` : ''}, task ${taskId}`);
-                moveFile(f.id, doneFolder);
+                log.audit('Submitted', `${f.name} -> ${cfg.type}${USE_QUEUES ? ` (queue ${queue})` : ''}, task ${taskId}`);
+                moveFile(f.id, cfg.archivedFolder);
                 summary.submitted++;
             } catch (e) {
                 log.error(`Failed to submit ${f.name}`, e);
                 summary.failed++;
-                moveFile(f.id, errorFolder);
+                moveFile(f.id, cfg.errorFolder);
             }
         }
 

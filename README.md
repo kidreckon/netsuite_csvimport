@@ -3,16 +3,16 @@
 `csv_import_pusher.js` is a SuiteScript 2.1 scheduled script. It submits CSV files from a File Cabinet folder to saved CSV imports, so nobody has to click through the UI. Results still show on **Setup > Import/Export > View CSV Import Status**.
 
 ## How it works
-- Scans every folder listed in `FOLDER_IMPORT_MAP` for `.csv` files.
-- Each folder maps to one saved CSV import (folder internal ID -> import script ID or internal ID). Edit `FOLDER_IMPORT_MAP` at the top of the script.
-- Submits it with `N/task` (`CSV_IMPORT`), setting the processing queue round-robin 1 -> 2 -> 3 -> 4 -> 5 -> 1 ... The last queue is remembered between runs via `N/cache` (best effort).
-- Moves the file to the *done* folder after submit. Submit failures go to the *error* folder if one is set.
+- Each record type has an entry in `PUSH_CONFIG` with its saved CSV import ID and three folders: `01 Push`, `02 Error`, `03 Archived`.
+- Only `.csv` files placed directly in a `01 Push` folder are submitted. Anything else in the parent folder is ignored.
+- Each file is submitted with `N/task` (`CSV_IMPORT`), with the processing queue rotating 1 -> 2 -> 3 -> 4 -> 5 -> 1 ... The last queue is remembered between runs via `N/cache` (best effort).
+- On success the file moves to that type's `03 Archived`; on a submit failure it moves to `02 Error`.
 - Stops early if governance is low; remaining files are picked up on the next run.
 
 ## Setup
-1. Upload the script to the File Cabinet and create a Scheduled Script record.
-2. Add two script parameters (Free-Form Text): `custscript_csvpush_done_folder`, `custscript_csvpush_error_folder` (optional). Values are folder internal IDs.
-3. Edit `FOLDER_IMPORT_MAP` with your inbox folder IDs and saved CSV import IDs.
+1. Upload the script to the File Cabinet and create a Scheduled Script record (no parameters needed).
+2. Set **Execute As Role** on the deployment to a role that can run CSV imports and access these folders.
+3. Edit `PUSH_CONFIG` for each record type (Journal is filled in; Vendor Invoice is a commented template).
 4. Deploy and schedule (e.g. every 15 minutes) or run on demand.
 
 ## Notes
