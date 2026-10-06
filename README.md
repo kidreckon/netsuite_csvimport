@@ -18,4 +18,4 @@
 ## Notes
 - Processing queues require the SuiteCloud Plus license. If you don't have it, set `USE_QUEUES = false`.
 - Saved imports must already have their field mappings and the import file type configured; the script only supplies the file.
-- Not tested in a live account. Verify `csvTask.queue` and the file move behaviour in sandbox first.
+- Not tested in a live account. Verify the file move behaviour in sandbox first.

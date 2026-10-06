@@ -71,7 +71,7 @@ define(['N/file', 'N/log', 'N/runtime', 'N/search', 'N/task', 'N/cache'], (file,
                     importFile: file.load({ id: f.id }),
                     name: `${cfg.type} ${f.name}`.slice(0, 100),
                 });
-                if (USE_QUEUES) csvTask.queue = queue;
+                if (USE_QUEUES) csvTask.queueId = queue;
 
                 const taskId = csvTask.submit();
                 log.audit('Submitted', `${f.name} -> ${cfg.type}${USE_QUEUES ? ` (queue ${queue})` : ''}, task ${taskId}`);
