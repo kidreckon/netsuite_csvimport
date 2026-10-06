@@ -9,6 +9,10 @@
 - On success the file moves to that type's `03 Archived`; on a submit failure it moves to `02 Error`.
 - Stops early if governance is low; remaining files are picked up on the next run.
 
+## Files
+- `csv_import_pusher.js`: sandbox/test config (Journal test folders).
+- `csv_import_pusher_prod.js`: production config (Multi CSV Import folders: Journal, Invoice, Vendor Invoice; Credit Note pending its import ID).
+
 ## Setup
 1. Upload the script to the File Cabinet and create a Scheduled Script record (no parameters needed).
 2. Set **Execute As Role** on the deployment to a role that can run CSV imports and access these folders.
